@@ -543,6 +543,74 @@ public class HttpLookupTableSourceITCaseTest {
         assertThat(collectedRows.size()).isEqualTo(5);
     }
 
+
+    @Test
+    public void testLookupJoinOnIDWithParam() throws Exception {
+
+        // GIVEN
+        setUpServerBodyStub(
+                "GET",
+                wireMockServer,
+                List.of(
+                        matchingJsonPath("$.enrichedString"),
+                        matchingJsonPath("$.row.aStringColumn"),
+                        matchingJsonPath("$.row.anIntColumn"),
+                        matchingJsonPath("$.row.aFloatColumn")
+                )
+        );
+
+        String sourceTable =
+                "CREATE TABLE Orders (\n"
+                        + "  proc_time AS PROCTIME(),\n"
+                        + "  id STRING\n"
+                        + ") WITH ("
+                        + "'connector' = 'datagen',"
+                        + "'rows-per-second' = '1',"
+                        + "'fields.id.kind' = 'sequence',"
+                        + "'fields.id.start' = '1',"
+                        + "'fields.id.end' = '5'"
+                        + ")";
+
+        String lookupTable =
+                "CREATE TABLE Customers (\n" +
+                        "  `enrichedInt` INT,\n" +
+                        "  `enrichedString` STRING\n"
+                        + ") WITH ("
+                        + "'format' = 'json',"
+                        + "'lookup-request.format' = 'json',"
+                        + "'lookup-request.format.json.fail-on-missing-field' = 'true',"
+                        + "'connector' = 'rest-lookup',"
+                        + "'lookup-method' = 'GET',"
+                        + "'gid.connector.http.source.generic-get-query.params' = 'enrichedString',"
+                        + "'url' = 'http://localhost:9090/client/{enrichedString}',"
+                        + "'gid.connector.http.source.lookup.query-creator' = 'custom-get-query',"
+
+                        + "'gid.connector.http.source.lookup.header.Content-Type' = 'application/json',"
+                        + "'asyncPolling' = 'false'"
+                        + ")";
+
+        tEnv.executeSql(sourceTable);
+        tEnv.executeSql(lookupTable);
+
+        // WHEN
+        // SQL query that performs JOIN on both tables.
+        String joinQuery =
+                "SELECT o.id, c.enrichedInt, c.enrichedString FROM Orders AS o"
+                        + " JOIN Customers FOR SYSTEM_TIME AS OF o.proc_time AS c"
+                        + " ON (\n"
+                        + "  o.id = c.enrichedString\n"
+                        + ")";
+
+        TableResult result = tEnv.executeSql(joinQuery);
+        result.await(15, TimeUnit.SECONDS);
+
+        // THEN
+        SortedSet<Row> collectedRows = getCollectedRows(result);
+
+        // TODO add assert on values
+        assertThat(collectedRows.size()).isEqualTo(5);
+    }
+
     @Test
     public void testLookupJoinOnRowWithRowType() throws Exception {
 
